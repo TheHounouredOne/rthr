@@ -122,7 +122,8 @@ body.smode .del-btn{display:flex}
 
 /* upload zone */
 #upz{border:1.5px dashed var(--border);border-radius:6px;padding:24px 14px;text-align:center;cursor:pointer;transition:border-color .2s,background .2s}
-#upz:hover{border-color:var(--accent);background:var(--accent-bg)}
+#upz:hover,#upz.drag-over{border-color:var(--accent);background:var(--accent-bg)}
+#upz.drag-over{border-style:solid}
 #upz p{font-size:12px;color:var(--dim);margin-top:8px}
 #upz small{font-size:11px;color:var(--hint)}
 #fi{display:none}
@@ -260,7 +261,7 @@ body.smode .del-btn{display:flex}
         <div class="i-sec">Upload</div>
         <div id="upz" onclick="document.getElementById('fi').click()">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="color:var(--hint)"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-          <p id="upz-label">Click to upload</p>
+          <p id="upz-label">Click or drag &amp; drop to upload</p>
           <small>JPG PNG GIF MP4 WebM</small>
         </div>
         <input type="file" id="fi" accept="image/*,video/*" onchange="onFile(event)">
@@ -493,25 +494,41 @@ function setTool(t,btn){
   document.querySelectorAll('.tp').forEach(p=>p.style.display='none');
   const panel = document.getElementById('tp-'+(t==='video'?'image':t));
   if(panel) panel.style.display='block';
-  if(t==='video'){ document.getElementById('fi').accept='video/*'; document.getElementById('upz-label').textContent='Click to upload video'; }
-  else if(t==='image'){ document.getElementById('fi').accept='image/*'; document.getElementById('upz-label').textContent='Click to upload'; }
+  if(t==='video'){ document.getElementById('fi').accept='video/*'; document.getElementById('upz-label').textContent='Click or drag & drop video'; }
+  else if(t==='image'){ document.getElementById('fi').accept='image/*'; document.getElementById('upz-label').textContent='Click or drag & drop to upload'; }
 }
 
 // ── File upload ───────────────────────────────────────────────────────────────
-function onFile(e){
-  const f=e.target.files[0]; if(!f)return;
-  const isVid=f.type.startsWith('video/');
-  const r=new FileReader();
-  r.onload=ev=>{
-    mdata=ev.target.result; mtype=isVid?'video':'image';
-    document.getElementById('uprev').style.display='block';
-    const img=document.getElementById('prev-img'), vid=document.getElementById('prev-vid');
+function handleFile(f){
+  if(!f) return;
+  const isVid = f.type.startsWith('video/');
+  const r = new FileReader();
+  r.onload = ev => {
+    mdata = ev.target.result; mtype = isVid ? 'video' : 'image';
+    document.getElementById('uprev').style.display = 'block';
+    const img = document.getElementById('prev-img'), vid = document.getElementById('prev-vid');
     if(isVid){ img.style.display='none'; vid.style.display='block'; vid.src=mdata; }
     else { vid.style.display='none'; img.style.display='block'; img.src=mdata; }
     setStatus('Ready — click "Add to Canvas"');
   };
   r.readAsDataURL(f);
 }
+
+function onFile(e){ handleFile(e.target.files[0]); }
+
+// ── Drag and drop on upload zone ──────────────────────────────────────────────
+(function(){
+  const upz = document.getElementById('upz');
+  upz.addEventListener('dragenter', e=>{ e.preventDefault(); upz.classList.add('drag-over'); });
+  upz.addEventListener('dragover',  e=>{ e.preventDefault(); upz.classList.add('drag-over'); });
+  upz.addEventListener('dragleave', e=>{ if(!upz.contains(e.relatedTarget)) upz.classList.remove('drag-over'); });
+  upz.addEventListener('drop', e=>{
+    e.preventDefault();
+    upz.classList.remove('drag-over');
+    const f = e.dataTransfer.files[0];
+    if(f) handleFile(f);
+  });
+})();
 
 // ── Add nodes ─────────────────────────────────────────────────────────────────
 function addMedia(){
