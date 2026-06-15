@@ -267,8 +267,8 @@ body.smode .del-btn{display:flex}
         <input type="file" id="fi" accept="image/*,video/*" onchange="onFile(event)">
         <div id="uprev"><img id="prev-img" style="display:none"><video id="prev-vid" muted loop style="display:none"></video></div>
         <div class="two" style="margin-top:10px">
-          <div class="f"><label>W</label><input type="number" id="nw" value="320"></div>
-          <div class="f"><label>H</label><input type="number" id="nh" value="220"></div>
+          <div class="f"><label>W</label><input type="number" id="nw" value="700"></div>
+          <div class="f"><label>H</label><input type="number" id="nh" value="480"></div>
         </div>
         <button class="sb pri" style="width:100%;margin-top:10px" onclick="addMedia()">Add to Canvas</button>
       </div>
@@ -345,15 +345,24 @@ let items = [], nodes = [], selNode = null, authed = false;
 let mdata = null, mtype = null;
 let cDrag = false, cSX = 0, cSL = 0;
 
+// ── Auth fetch helper ─────────────────────────────────────────────────────────
+function authFetch(url, opts={}){
+  const tok = localStorage.getItem('__studio_tok');
+  return fetch(url, {...opts, headers:{...(opts.headers||{}), ...(tok?{'Authorization':'Bearer '+tok}:{})}});
+}
+
 // ── Boot ──────────────────────────────────────────────────────────────────────
 async function boot() {
   try {
-    const timeout = new Promise(res => setTimeout(() => res(null), 4000));
-    const sess = await Promise.race([
-      fetch('/api/session',{credentials:'include'}).then(r=>r.json()).catch(()=>null),
-      timeout
-    ]);
-    authed = !!(sess && sess.authenticated);
+    const tok = localStorage.getItem('__studio_tok');
+    if(tok){
+      const timeout = new Promise(res => setTimeout(() => res(null), 4000));
+      const sess = await Promise.race([
+        authFetch('/api/session').then(r=>r.json()).catch(()=>null),
+        timeout
+      ]);
+      authed = !!(sess && sess.authenticated);
+    }
     if (authed) { document.getElementById('mode-badge').classList.add('on'); document.body.classList.add('smode'); }
     loadPortfolio().catch(()=>{});
   } catch(e) {
@@ -367,7 +376,7 @@ async function boot() {
 
 // ── Portfolio ─────────────────────────────────────────────────────────────────
 async function loadPortfolio() {
-  const d = await fetch('/api/portfolio',{credentials:'include'}).then(r=>r.json()).catch(()=>({items:[]}));
+  const d = await fetch('/api/portfolio').then(r=>r.json()).catch(()=>({items:[]}));
   items = d.items || [];
   renderConveyor();
 }
@@ -453,12 +462,11 @@ async function doAuth(){
   const code = document.getElementById('auth-inp').value;
   document.getElementById('auth-err').style.display='none';
   document.getElementById('auth-inp').classList.remove('err');
-
   try {
-    const res = await fetch('/api/auth',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({code})});
+    const res = await fetch('/api/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code})});
     const d = await res.json();
-
     if(d.success){
+      localStorage.setItem('__studio_tok', d.token);
       authed=true; closeAuth();
       document.getElementById('mode-badge').classList.add('on');
       document.body.classList.add('smode');
@@ -475,7 +483,7 @@ async function doAuth(){
 }
 
 async function logOut(){
-  await fetch('/api/logout',{method:'POST',credentials:'include'});
+  localStorage.removeItem('__studio_tok');
   authed=false;
   document.getElementById('mode-badge').classList.remove('on');
   document.body.classList.remove('smode');
@@ -533,8 +541,8 @@ function onFile(e){ handleFile(e.target.files[0]); }
 // ── Add nodes ─────────────────────────────────────────────────────────────────
 function addMedia(){
   if(!mdata){toast('Upload a file first');return;}
-  const w=+document.getElementById('nw').value||320, h=+document.getElementById('nh').value||220;
-  addNode({type:mtype,src:mdata,x:20,y:20,w,h});
+  const cw=+document.getElementById('cw').value||700, ch=+document.getElementById('ch').value||480;
+  addNode({type:mtype,src:mdata,x:0,y:0,w:cw,h:ch});
 }
 function addText(){
   const content=document.getElementById('tc').value||'Edit me';
@@ -642,14 +650,18 @@ function resizeCF(){
   document.getElementById('csize').textContent=w+' × '+h;
 }
 
-function clearCanvas(){
-  if(!confirm('Clear all elements?'))return;
+function silentClearCanvas(){
   nodes=[]; document.querySelectorAll('#cf .cn').forEach(n=>n.remove());
   document.getElementById('cf-ph').style.display='block';
   selNode=null; document.getElementById('sel-panel').style.display='none';
   updLayers(); updNCnt();
   document.getElementById('ititle').value=''; document.getElementById('idesc').value='';
   mdata=null; mtype=null; document.getElementById('uprev').style.display='none'; document.getElementById('fi').value='';
+}
+
+function clearCanvas(){
+  if(!confirm('Clear all elements?'))return;
+  silentClearCanvas();
 }
 
 // ── Publish ───────────────────────────────────────────────────────────────────
@@ -659,19 +671,23 @@ async function publishItem(){
   const description=document.getElementById('idesc').value.trim();
   const cw=+document.getElementById('cw').value||700, ch=+document.getElementById('ch').value||480;
   setStatus('Publishing…');
-  const res=await fetch('/api/portfolio',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({title,description,canvasWidth:cw,canvasHeight:ch,nodes:nodes.map(n=>({...n})),order:items.length})});
-  const d=await res.json();
-  if(d.success){ toast('Published ✓'); await loadPortfolio(); clearCanvas(); setStatus(''); }
-  else { toast('Publish failed'); setStatus('Error'); }
+  try {
+    const res=await authFetch('/api/portfolio',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title,description,canvasWidth:cw,canvasHeight:ch,nodes:nodes.map(n=>({...n})),order:items.length})});
+    const d=await res.json();
+    if(d.success){ toast('Published ✓'); await loadPortfolio(); silentClearCanvas(); setStatus(''); }
+    else { toast('Publish failed: '+(d.error||'unknown error')); setStatus('Error'); }
+  } catch(e) { toast('Publish failed — network error'); setStatus('Error'); }
 }
 
 // ── Delete portfolio item ─────────────────────────────────────────────────────
 async function delItem(id){
   if(!confirm('Permanently delete this item?'))return;
-  const res=await fetch('/api/portfolio/'+id,{method:'DELETE',credentials:'include'});
-  const d=await res.json();
-  if(d.success){ toast('Deleted'); await loadPortfolio(); }
-  else toast('Delete failed');
+  try {
+    const res=await authFetch('/api/portfolio/'+id,{method:'DELETE'});
+    const d=await res.json();
+    if(d.success){ toast('Deleted'); await loadPortfolio(); }
+    else toast('Delete failed: '+(d.error||'unknown error'));
+  } catch(e) { toast('Delete failed — network error'); }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
