@@ -10,7 +10,7 @@ const SESSION_KEY = "X9zKpQ2mLvTr7nYw";
 // ── Firebase helper ───────────────────────────────────────────────────────────
 function firebase(method, path, data) {
   return new Promise((resolve, reject) => {
-    const payload = data ? JSON.stringify(data) : null;
+    const payload = data !== undefined ? JSON.stringify(data) : null;
     const url = new URL(FIREBASE_URL + path + ".json");
     const opts = {
       hostname: url.hostname,
@@ -25,8 +25,21 @@ function firebase(method, path, data) {
       let body = "";
       res.on("data", (c) => (body += c));
       res.on("end", () => {
-        try { resolve(JSON.parse(body)); }
-        catch { resolve(body); }
+        let parsed;
+        try { parsed = JSON.parse(body); } catch { parsed = body; }
+
+        // Firebase returns non-2xx status codes (401 for rule violations,
+        // 400 for bad data, etc.) along with an { error: "..." } body.
+        // Previously this was never checked, so a denied write/delete
+        // resolved normally and got reported to the client as a success.
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          const message =
+            parsed && typeof parsed === "object" && parsed.error
+              ? parsed.error
+              : `Firebase request failed with status ${res.statusCode}`;
+          return reject(new Error(message));
+        }
+        resolve(parsed);
       });
     });
     req.on("error", reject);
@@ -73,7 +86,7 @@ function getToken(event) {
 // ── Main handler ──────────────────────────────────────────────────────────────
 exports.handler = async (event) => {
   const method = event.httpMethod;
-  const path   = event.path.replace(/^\/.netlify\/functions\/api/, "").replace(/^\/api/, "") || "/";
+  const path   = event.path.replace(/^\/\.netlify\/functions\/api/, "").replace(/^\/api/, "") || "/";
   const authed = verifyToken(getToken(event));
 
   if (method === "OPTIONS") return { statusCode: 204, headers: CORS, body: "" };
@@ -102,8 +115,8 @@ exports.handler = async (event) => {
               .sort((a, b) => (a.order || 0) - (b.order || 0))
           : [];
       return json(200, { items });
-    } catch {
-      return json(500, { error: "Database error" });
+    } catch (err) {
+      return json(500, { error: err.message || "Database error" });
     }
   }
 
@@ -118,9 +131,12 @@ exports.handler = async (event) => {
     delete item.id;
     try {
       const result = await firebase("POST", "/portfolio", item);
+      if (!result || !result.name) {
+        return json(500, { error: "Firebase did not return a new item id" });
+      }
       return json(200, { success: true, id: result.name });
-    } catch {
-      return json(500, { error: "Database error" });
+    } catch (err) {
+      return json(500, { error: err.message || "Database error" });
     }
   }
 
@@ -132,8 +148,8 @@ exports.handler = async (event) => {
     try {
       await firebase("PATCH", `/portfolio/${id}`, body);
       return json(200, { success: true });
-    } catch {
-      return json(500, { error: "Database error" });
+    } catch (err) {
+      return json(500, { error: err.message || "Database error" });
     }
   }
 
@@ -143,8 +159,8 @@ exports.handler = async (event) => {
     try {
       await firebase("DELETE", `/portfolio/${id}`);
       return json(200, { success: true });
-    } catch {
-      return json(500, { error: "Database error" });
+    } catch (err) {
+      return json(500, { error: err.message || "Database error" });
     }
   }
 
